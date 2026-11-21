@@ -2,7 +2,7 @@
 
 Statistical modeling, diagnostic audit, and fixation-detector sensitivity study of **`183,627` eye fixations** from **`7,250` visitors (ages 3 to 93)** viewing a complex natural scene for 10 seconds at the NEMO Science Museum in Amsterdam (Strauch et al., 2023; `60 Hz` infrared eye tracking, [OSF dataset](https://osf.io/sk4fr/)).
 
-Originated as Case Study 1 in the M.Sc. Data Science *Case Studies* course at TU Dortmund University (Prof. Dr. Paul Bürkner & Dr. Šimon Kucharský, Winter Term 2024/25, Group 5) and subsequently refactored into a clean, unit-tested Python pipeline incorporating every methodological review point: auditing a hidden kiosk birth-year default artifact (`DoB = 2000`), replacing skewed raw-scale models with an exact REML/ML Log-Normal Linear Mixed-Effects solver (`src/lmm.py`), separating continuous trial-time dynamics from fixation-order survivorship bias and 10-second right-censoring, and running a true One-Factor-At-a-Time (OFAT) + independent I-VT detector robustness study on `1,000` real `60 Hz` gaze traces.
+Completed for *Case Studies I* in the M.Sc. Data Science program at TU Dortmund University (Prof. Dr. Paul Bürkner & Dr. Šimon Kucharský, Winter Term 2024/25, Group 5). The repository implements the full statistical pipeline in Python: auditing a hidden kiosk birth-year default artifact (`DoB = 2000`), fitting an exact REML/ML Log-Normal Linear Mixed-Effects solver (`src/lmm.py`) rather than skewed raw-scale Gaussian models, separating continuous trial-time dynamics from fixation-order survivorship bias and 10-second right-censoring, and running a One-Factor-At-a-Time (OFAT) plus independent I-VT detector robustness study on `1,000` real `60 Hz` gaze traces.
 
 ![Original NEMO free-viewing stimulus alongside empirical gaze density overlay across 178,186 fixations](https://raw.githubusercontent.com/r-a-j/Eye-Tracking-Fixations/main/figures/stimulus_and_gaze_overlay.png)
 
@@ -47,7 +47,7 @@ where $f_{\text{onset}}$ and $f_{\text{age}}$ are 5-df cubic B-splines evaluated
 | Excl. initial fixation (`Order > 0`, `<= 8 s`) | 149,348 | 7,247 | 0.040 | 0.5% / 4.5% | **+11.4%** (`206->229 ms`) | $2.7 \times 10^{-162}$ | -0.35% | 0.138 | 0.157 |
 | Full `0-10 s` (incl. right-censored tail) | 183,627 | 7,250 | 0.037 | 1.0% / 4.6% | +17.7% *(cutoff bias)* | $< 10^{-300}$ | -0.20% | 0.179 | 0.281 |
 
-*Note: Participant-level Kruskal-Wallis tests across the 11 age brackets are computed on individual visitor means ($G$ independent participants), replacing an earlier course-script bug that ran the test on the 11-row group summary table.*
+*Note: Participant-level Kruskal-Wallis tests across the 11 age brackets are computed on individual visitor means ($G$ independent participants) to avoid pseudoreplication across repeated fixations and preserve valid sample degrees of freedom.*
 
 ![Continuous lifespan age curve across three cohorts vs between-viewer random-intercept spread](https://raw.githubusercontent.com/r-a-j/Eye-Tracking-Fixations/main/figures/age_lifespan_analysis.png)
 
