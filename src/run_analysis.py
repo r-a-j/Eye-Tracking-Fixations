@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy import stats
+from scipy.ndimage import gaussian_filter
+from PIL import Image
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -43,6 +45,7 @@ RES_DIR = REPO_ROOT / "results"
 
 DEFAULT_ANALYSIS_DIR = REPO_ROOT.parent / "project" / "analysis"
 DEFAULT_PREPROC_DIR = REPO_ROOT.parent / "project" / "nemo_eyetracking" / "data" / "pre_processed_updated"
+DEFAULT_STIMULUS_IMG = REPO_ROOT.parent / "project" / "nemo_eyetracking" / "saleval" / "images" / "free_viewing_img_1080.png"
 
 # Editorial scientific color palette
 COL_DARK = "#0f172a"
@@ -732,9 +735,98 @@ def plot_temporal_dynamics_and_censoring(
     plt.close(fig)
 
 
+def _build_gaze_density_grid(df: pd.DataFrame, bins_x: int = 192, bins_y: int = 108) -> tuple[np.ndarray, int]:
+    """Compute screen-aligned 2D fixation density grid (top-down row order matching image pixels).
+
+    Note: compiled_fixations stores avg_y in bottom-left Cartesian screen pixels
+    (0 = bottom, 1080 = top), so y_top = SCREEN_H_PX - avg_y maps to image row coordinates.
+    """
+    in_screen = df[
+        df["avg_x"].between(0.0, SCREEN_W_PX) & df["avg_y"].between(0.0, SCREEN_H_PX)
+    ]
+    x_px = in_screen["avg_x"].to_numpy(float)
+    y_top = SCREEN_H_PX - in_screen["avg_y"].to_numpy(float)
+    h, _, _ = np.histogram2d(
+        x_px,
+        y_top,
+        bins=[bins_x, bins_y],
+        range=[[0.0, SCREEN_W_PX], [0.0, SCREEN_H_PX]],
+    )
+    return h.T, int(len(in_screen))
+
+
+def _load_stimulus_rgb(stimulus_img: Path | None) -> np.ndarray | None:
+    if stimulus_img is None or not stimulus_img.exists():
+        return None
+    return np.asarray(Image.open(stimulus_img).convert("RGB"))
+
+
+def _overlay_heatmap_on_stimulus(stim_rgb: np.ndarray, smooth_density: np.ndarray) -> np.ndarray:
+    """Blend an inferno fixation density heatmap cleanly over a dimmed stimulus image."""
+    # Resize smooth density to stimulus height x width cleanly via PIL bilinear
+    norm = smooth_density / max(float(smooth_density.max()), 1e-9)
+    norm_gamma = np.power(np.clip(norm, 0.0, 1.0), 0.72)
+    cmap = plt.get_cmap("inferno")
+    heat_rgba = cmap(norm_gamma)
+    heat_rgb = (heat_rgba[:, :, :3] * 255.0).astype(np.uint8)
+    heat_resized = np.asarray(
+        Image.fromarray(heat_rgb).resize((stim_rgb.shape[1], stim_rgb.shape[0]), Image.Resampling.BILINEAR),
+        dtype=float,
+    )
+    alpha_small = np.clip(norm_gamma * 0.88, 0.0, 0.85)
+    alpha_full = np.asarray(
+        Image.fromarray((alpha_small * 255.0).astype(np.uint8)).resize(
+            (stim_rgb.shape[1], stim_rgb.shape[0]), Image.Resampling.BILINEAR
+        ),
+        dtype=float,
+    )[..., None] / 255.0
+
+    # Slightly dim background stimulus where gaze is sparse so focal hotspots pop cleanly
+    gray = np.dot(stim_rgb[..., :3], [0.299, 0.587, 0.114])[..., None]
+    bg_muted = (0.55 * stim_rgb.astype(float) + 0.45 * gray) * 0.52
+    blended = bg_muted * (1.0 - alpha_full) + heat_resized * alpha_full
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def plot_stimulus_and_gaze_overlay(df: pd.DataFrame, stimulus_img: Path | None) -> None:
+    """Figure 0 (1x2): Original NEMO free-viewing stimulus alongside 178k-fixation gaze overlay."""
+    stim_rgb = _load_stimulus_rgb(stimulus_img)
+    if stim_rgb is None:
+        return
+
+    grid, n_in = _build_gaze_density_grid(df, bins_x=192, bins_y=108)
+    smooth = gaussian_filter(grid, sigma=3.2)
+    blended = _overlay_heatmap_on_stimulus(stim_rgb, smooth)
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.8, 4.55), dpi=220)
+    axes[0].imshow(stim_rgb)
+    axes[0].set_title("A. Original 10-Second Free-Viewing Stimulus (1920x1080)")
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
+
+    axes[1].imshow(blended)
+    axes[1].set_title(f"B. Empirical Fixation Density Overlay ({n_in:,} Fixations, n = 7,250)")
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
+
+    fig.text(
+        0.99,
+        0.012,
+        "Stimulus image: NEMO Science Museum Amsterdam free-viewing experiment (Strauch et al., 2023; OSF sk4fr)",
+        ha="right",
+        va="bottom",
+        fontsize=7.8,
+        color="#64748b",
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 1], pad=1.2)
+    fig.savefig(FIG_DIR / "stimulus_and_gaze_overlay.png", dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_ofat_and_spatial_gaze(
     df: pd.DataFrame,
     ofat_df: pd.DataFrame,
+    stimulus_img: Path | None = None,
 ) -> None:
     """Figure 4 (1x2): True OFAT Hessels + I-VT robustness + 2D screen fixation density map."""
     fig, axes = plt.subplots(1, 2, figsize=(13.8, 5.7), dpi=220, gridspec_kw={"width_ratios": [1.18, 1.0]})
@@ -746,7 +838,7 @@ def plot_ofat_and_spatial_gaze(
         fam_colors = {"Reference": COL_DARK, "Adaptive": COL_TEAL, "I-VT": COL_BLUE}
         cols = [fam_colors.get(f, COL_SLATE) for f in ofat_df["detector_family"]]
 
-        bars = ax.barh(y_pos, ofat_df["onset_05_to_70_rise_pct"], height=0.62, color=cols, alpha=0.86)
+        ax.barh(y_pos, ofat_df["onset_05_to_70_rise_pct"], height=0.62, color=cols, alpha=0.86)
         ax.axvline(float(ofat_df.iloc[0]["onset_05_to_70_rise_pct"]), color=COL_DARK, ls="--", lw=1.1, alpha=0.65)
         for yp, row in zip(y_pos, ofat_df.itertuples()):
             ax.text(
@@ -768,7 +860,6 @@ def plot_ofat_and_spatial_gaze(
         ax.set_title("A. OFAT Detector Robustness (1,000 Real 60 Hz Traces)")
         ax.grid(True, axis="x", alpha=0.35)
 
-        # Clean custom legend sitting in reserved space below bottom bar
         from matplotlib.patches import Patch
         ax.legend(
             handles=[
@@ -781,29 +872,28 @@ def plot_ofat_and_spatial_gaze(
             framealpha=0.96,
         )
 
-    # Panel B: 2D Spatial Fixation Density on 1920 x 1080 stimulus screen
+    # Panel B: 2D Spatial Fixation Density aligned right-side-up on 1920 x 1080 stimulus screen
     ax2 = axes[1]
-    ax2.set_facecolor("#000004")
-    in_screen = df[
-        df["avg_x"].between(0.0, SCREEN_W_PX) & df["avg_y"].between(0.0, SCREEN_H_PX)
-    ]
-    h, xedges, yedges = np.histogram2d(
-        in_screen["avg_x"].to_numpy(),
-        in_screen["avg_y"].to_numpy(),
-        bins=[96, 54],
-        range=[[0.0, SCREEN_W_PX], [0.0, SCREEN_H_PX]],
-    )
-    im = ax2.imshow(
-        np.maximum(h.T, 0.5),
-        origin="upper",
-        extent=[0, SCREEN_W_PX, SCREEN_H_PX, 0],
-        cmap="inferno",
-        norm=LogNorm(vmin=1.0, vmax=max(10.0, float(h.max()))),
-        aspect="equal",
-    )
-    cbar = fig.colorbar(im, ax=ax2, fraction=0.035, pad=0.03, shrink=0.66)
-    cbar.set_label("Fixations per 20x20 px Bin (log)", fontsize=8.4)
-    ax2.set_title(f"B. Screen Fixation Density ({len(in_screen):,} Fixations)", fontsize=10.8, pad=10)
+    stim_rgb = _load_stimulus_rgb(stimulus_img)
+    grid, n_in = _build_gaze_density_grid(df, bins_x=192, bins_y=108)
+    if stim_rgb is not None:
+        smooth = gaussian_filter(grid, sigma=3.2)
+        blended = _overlay_heatmap_on_stimulus(stim_rgb, smooth)
+        ax2.imshow(blended, extent=[0, SCREEN_W_PX, SCREEN_H_PX, 0], aspect="equal")
+        ax2.set_title(f"B. Fixation Density on Stimulus ({n_in:,} Fixations)", fontsize=10.8, pad=10)
+    else:
+        ax2.set_facecolor("#000004")
+        im = ax2.imshow(
+            np.maximum(grid, 0.5),
+            origin="upper",
+            extent=[0, SCREEN_W_PX, SCREEN_H_PX, 0],
+            cmap="inferno",
+            norm=LogNorm(vmin=1.0, vmax=max(10.0, float(grid.max()))),
+            aspect="equal",
+        )
+        cbar = fig.colorbar(im, ax=ax2, fraction=0.035, pad=0.03, shrink=0.66)
+        cbar.set_label("Fixations per 10x10 px Bin (log)", fontsize=8.4)
+        ax2.set_title(f"B. Screen Fixation Density ({n_in:,} Fixations)", fontsize=10.8, pad=10)
     ax2.set_xlabel("Screen X Coordinate (px, 1920x1080)")
     ax2.set_ylabel("Screen Y Coordinate (px, top-down)")
     ax2.set_xlim(0, SCREEN_W_PX)
@@ -817,6 +907,7 @@ def plot_ofat_and_spatial_gaze(
 def run_all(
     analysis_dir: Path = DEFAULT_ANALYSIS_DIR,
     preproc_dir: Path = DEFAULT_PREPROC_DIR,
+    stimulus_img: Path | None = DEFAULT_STIMULUS_IMG,
     ofat_n: int = 1000,
     reuse_ofat: bool = False,
 ) -> None:
@@ -866,24 +957,27 @@ def run_all(
         if len(ofat_df):
             ofat_df.to_csv(ofat_csv, index=False)
 
-    # 5. Generate all 4 publication-grade figures
+    # 5. Generate all 5 publication-grade figures (including stimulus + empirical gaze overlay)
+    plot_stimulus_and_gaze_overlay(df, stimulus_img)
     plot_data_audit_and_diagnostics(df, raw_lmm, cohort_artifacts["all_uncensored"]["reml"])
     plot_age_lifespan_analysis(df, cohort_artifacts)
     plot_temporal_dynamics_and_censoring(df, cohort_artifacts)
-    plot_ofat_and_spatial_gaze(df, ofat_df)
-    print("\nSaved all CSV tables and 4 diagnostic figures successfully.", flush=True)
+    plot_ofat_and_spatial_gaze(df, ofat_df, stimulus_img=stimulus_img)
+    print("\nSaved all CSV tables and diagnostic figures successfully.", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run NEMO eye-tracking fixation analysis and OFAT robustness.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_ANALYSIS_DIR, help="Directory with compiled_fixations.csv & participant_info.csv")
     parser.add_argument("--preproc-dir", type=Path, default=DEFAULT_PREPROC_DIR, help="Directory with 60 Hz pre-processed gaze CSVs")
+    parser.add_argument("--stimulus-img", type=Path, default=DEFAULT_STIMULUS_IMG, help="Path to NEMO free_viewing_img_1080.png stimulus")
     parser.add_argument("--ofat-n", type=int, default=1000, help="Number of stratified 60 Hz traces for OFAT sweep")
     parser.add_argument("--reuse-ofat", action="store_true", help="Reuse existing results/ofat_robustness.csv instead of re-parsing 60 Hz traces")
     args = parser.parse_args()
     run_all(
         analysis_dir=args.data_dir,
         preproc_dir=args.preproc_dir,
+        stimulus_img=args.stimulus_img,
         ofat_n=args.ofat_n,
         reuse_ofat=args.reuse_ofat,
     )

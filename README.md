@@ -4,7 +4,7 @@ Statistical modeling, diagnostic audit, and fixation-detector sensitivity study 
 
 Originated as Case Study 1 in the M.Sc. Data Science *Case Studies* course at TU Dortmund University (Prof. Dr. Paul Bürkner & Dr. Šimon Kucharský, Winter Term 2024/25, Group 5) and subsequently refactored into a clean, unit-tested Python pipeline incorporating every methodological review point: auditing a hidden kiosk birth-year default artifact (`DoB = 2000`), replacing skewed raw-scale models with an exact REML/ML Log-Normal Linear Mixed-Effects solver (`src/lmm.py`), separating continuous trial-time dynamics from fixation-order survivorship bias and 10-second right-censoring, and running a true One-Factor-At-a-Time (OFAT) + independent I-VT detector robustness study on `1,000` real `60 Hz` gaze traces.
 
-![Continuous trial-time ambient-to-focal curve, 10s right-censoring, and fixation-order survivorship bias](https://raw.githubusercontent.com/r-a-j/Eye-Tracking-Fixations/main/figures/temporal_dynamics_and_censoring.png)
+![Original NEMO free-viewing stimulus alongside empirical gaze density overlay across 178,186 fixations](https://raw.githubusercontent.com/r-a-j/Eye-Tracking-Fixations/main/figures/stimulus_and_gaze_overlay.png)
 
 ---
 
@@ -15,6 +15,8 @@ Originated as Case Study 1 in the M.Sc. Data Science *Case Studies* course at TU
 2. **Temporal Dynamics Over the 10-Second Trial:** *Do fixation durations change systematically over the course of viewing?*
    - **Finding:** **Strong non-linear ambient-to-focal rise followed by a plateau** (consistent with Unema et al., 2005 and Nuthmann et al., 2010). Over the uncensored interior (`onset <= 8.0 s`, where `>99%` of fixations finish naturally), predicted median duration rises **`+14.5%`** from `199.2 ms` (`0.5 s`) to `228.2 ms` (`7.0 s`) before plateauing ($\chi^2 = 1{,}156.2, df = 5, p = 9.2 \times 10^{-248}$; non-linearity vs. linear $\chi^2 = 60.1, p = 2.7 \times 10^{-12}$).
    - **Two critical measurement artifacts exposed:** Naive plots against *fixation order* dip sharply after Order 22 because only fast-saccading viewers can pack 25 to 36 fixations into a 10-second trial (survivorship/selection bias). Similarly, naive fits over all `0-10 s` plunge after `8.5 s` due to hard right-censoring at the 10-second stimulus cutoff (`52.5%` final fixations in `9.0-9.5 s`, `96.9%` in `9.5-10.0 s`).
+
+![Continuous trial-time ambient-to-focal curve, 10s right-censoring, and fixation-order survivorship bias](https://raw.githubusercontent.com/r-a-j/Eye-Tracking-Fixations/main/figures/temporal_dynamics_and_censoring.png)
 
 ---
 
